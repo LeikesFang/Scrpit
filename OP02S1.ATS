@@ -1,0 +1,1798 @@
+SCRIPT OP02S1()
+    varNumber DryCycleMode,gDryCycleStatus
+    varNumber ReleasePalletFlag,ReScanInput,ReScanFlag
+    varNumber PalletID,BypassInput,ndxSequ  
+    
+    varString PalletData,Destination,PartType,PresentSeq
+    varstring sSeq,TmpSeq,strData,strPrompt,strSeq,strIdenfifier 
+       
+    varNumber NumToolType,NeedScan,NeedScan_2
+    
+    varString MyCoinChanger1,MyCoinChanger2,MyCoinChanger3,strRing
+    varString MyCoinSensor1,MyCoinSensor2,MyCoinSensor3
+    
+    varString strPrefix,strSequ,LotSize,DoneNum,sScanDisplay
+    varString sScanFeedback
+    varNumber sequCount,isBearingChkPass,NeedJBScan
+    varString JBString1,JBString2,JBString,n1,n2,n3,n4,n5,n6,n
+    varString SPString1,SPString2,SPString //SPACER
+    varString OSString1,OSString2,OSString 
+    varNumber nlength,nl1,nl2,nl3,nl4,nl5,nl6,nl
+    ///zy add 150831
+    varNumber PushNum
+    varString ProgramID_OS,ProgramID_SPACER,ProgramID_JB
+    varString MyCoinChanger4,MyCoinChanger5,MyCoinSensor4,MyCoinSensor5
+	///lzr add 220614
+    varNumber UseBearingTest,NumRing,SlingerOringcheck
+    global varString gOP02S1_FormNO=""
+    global varNumber gOP02S1_DoneNum = 0 
+    global varNumber gOP02S1_LotSize = 0
+    
+    Bypass(REGISTERID,BypassCheckcode)
+    Bypass(REGISTERID,BypassCheckOILSlingercode)
+    Bypass(REGISTERID,BypassCheckJBcode)
+    Bypass(REGISTERID,BypassCheckSpacercode)
+    ReleasePalletFlag = 0  
+    StationHeader(CUSTOM,"%s [%s]","SEQUENCE,CUSTOMER_PN")
+    ///StationHeader(CUSTOM,"%s [%s] CT:%ss","SEQUENCE,ID21,CYCLETIME")
+    TurnOff(OP02S1_DIGITALOUTPUTBLOCK0)
+    TurnOff(OP02S1_DIGITALOUTPUTBLOCK1)
+    TurnOff(OP02S1_DIGITALOUTPUTBLOCK2) //ADD by lzr 20220614
+    output(KEYENCE_Control,"LOFF")
+    DigitalOutput(StationFree,ON)
+    //////20190423 DHF///////////////////////
+    DigitalOutput(OSSetupPosLight,OFF)
+    DigitalOutput(OSSetupPosLightR,OFF)
+    DigitalOutput(RingGuideLight1,OFF)
+
+    //ClearDisplay()
+    DisplayLine(1,"NUM[ - ]")
+    WaitDigitalInput(PalletOnStation,ON,"4-Waiting for Pallet...")
+    
+    
+    CycleTime(START)
+    
+    DigitalOutput(StationFree,OFF)
+    ClearDisplay()
+    PalletID = Input(OP02S1_PalletID)
+    if(PalletID == 0)
+        DisplayLine(1,"NUM[ - ]")
+        DisplayError("7-NO PALLET ID RETURNED","",true)
+        CycleTime(END)      
+        return
+    end
+    PalletData = PALLETSEQUENCE_GETDATA(palletID)
+    PalletID    = STRING(PARSECOMMA,PalletData)
+    Destination = STRING(PARSECOMMA,PalletData)
+    PartType    = STRING(PARSECOMMA,PalletData)
+    PresentSeq  = STRING(PARSECOMMA,PalletData)
+    TmpSeq = PresentSeq
+       
+    If(ReadDigitalInput(DryCycle) != DryCycleMode)
+        DigitalOutput(RunDryCycle,DryCycleMode)
+        WaitDigitalInput(DryCycle,DryCycleMode,"<-Changing Dry Cycle Mode")
+    end    
+  
+    if((DryCycleMode==0)&&(PresentSeq==DryCycleSequence))
+        ReleasePalletFlag = 1
+        PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"DRYCYCLEPURGE")
+    end    
+    
+    if((Destination != "OP02S1") || (ReleasePalletFlag == 1) )
+        DisplayLine(1,"NUM[ - ]")
+        DisplayLine(2,"8-The Destination is error!")
+        WaitDigitalInput(OperatorSwitch1,ON,":-Press Two Green Buttons to release pallet.") 
+        DigitalOutput(ReleasePallet,ON)   
+        WaitDigitalInput(PalletOnStation,OFF,";-Waiting for Pallet Release...") 
+        DigitalOutput(ReleasePallet,OFF)
+        CycleTime(END) 
+        return
+    end
+    
+    if(DryCycleMode == 1)
+        delay(3000)
+        DisplayLine(1,"NUM[ - ]")
+        WaitDigitalInput(OperatorSwitch1,ON,":-Press Two Green Buttons to release pallet.") 
+        PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"OP03S1")
+        DigitalOutput(ReleasePallet,ON)   
+        WaitDigitalInput(PalletOnStation,OFF,";-Waiting for Pallet Release...") 
+        DigitalOutput(ReleasePallet,OFF)
+        
+        CycleTime(END) 
+        return        
+    end    
+    
+    ///sSeq = TmpSeq
+    ///SetToSequence(sSeq)
+    QUEUE(CLEAR,"OP02S1_AUTOSEQ")
+    Delay(100)
+    QUEUE(ADD,"OP02S1_AUTOSEQ",TmpSeq)
+    DisplayLine(1,"NUM[ - ]")
+    sSeq= GetSequence(PEEK,"6-Waiting for a sequence...")//,INCLUDE_ARCHIVES)//RETURNONERROR)
+    GetSequence(DISCARD)    
+    
+            
+    Table(WRITE,"PALLET","PalletID",ftoa(PalletID,0))
+    PSTATS(RESULT,"PalletID",PalletID) 
+       
+            /// Get Assembly amount and done num for current station 
+    LotSize = ASSEMBLY_AMOUNT
+    DoneNum = itoa(gOP02S1_DoneNum)
+    if(gOP02S1_FormNO != ASSEMBLY_FORMNO)
+        Run GetDoneNum(sSeq,strPrefix,strSequ,LotSize,DoneNum)
+        gOP02S1_FormNO = ASSEMBLY_FORMNO
+        gOP02S1_DoneNum = DoneNum
+        gOP02S1_LotSize = LotSize
+    end
+            ///------------------------------
+    ////Bypass current station
+    BypassInput = ReadDigitalInput(Bypass) 
+    If(BypassInput == 1)            
+        if(gOP02S1_FormNO != ASSEMBLY_FORMNO)
+            DigitalOutput(ID21Changed,ON)
+            WaitDigitalInput(Bypass,OFF,"1-Waiting for Bypass off") 
+            DigitalOutput(ID21Changed,OFF)
+            gOP02S1_FormNO = ASSEMBLY_FORMNO
+            return  
+        end        
+        
+        If(Destination == "OP02S1")
+            DisplayLine(1,"NUM[ - ]")
+            Table(WRITE,"RESULTS","WorkMode" ,"Bypass")
+            DigitalOutput(ReleasePallet,ON)
+            PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"OP03S1")
+            WaitDigitalInput(PalletOnStation,OFF,";-Waiting for Pallet Release...") 
+            DigitalOutput(ReleasePallet,OFF) 
+            ndxSequ = QUEUE(FIND,"OP02S1_AUTOSEQ",sSeq)
+            if(ndxSequ > 0) 
+                QUEUE(REMOVEITEM,"OP02S1_AUTOSEQ",ndxSequ)
+            end            
+            
+            CycleTime(END) 
+            return            
+        end
+    end
+    DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+    //////20190423 DHF///////////////////////
+    if(NeedScan==1)
+         
+        Pickbin(binOP02OIL_SLINGER,"j-Pick Oil Slinger.")
+        output(KEYENCE_Control,"BLOAD,1")
+        Delay(500)
+        DisplayLine(2,"k - wait vision check .")
+        isBearingChkPass = 0
+        repeat
+            sScanDisplay = ""
+            output(KEYENCE_Control,"LON")
+            DigitalOutput(BrChkLightR,ON)
+            DigitalOutput(BrChkLightG,ON)
+            delay(500)
+            sScanDisplay=input(KEYENCE_Control)
+            
+            if(String(Find,sScanDisplay,OIL_SLINGER)>0)//Bearing
+                isBearingChkPass = 1
+                Table(WRITE,"RESULT","OIL_SLINGER",sScanDisplay)
+                PSTATS(TRACE,"ITEM_2D_Code_" + "OIL_SLINGER" ,sScanDisplay)
+                DigitalOutput(BrChkLightR,OFF)
+                DigitalOutput(BrChkLightG,ON)
+                DisplayLine(1,"l-OIL_SLINGER Check Pass.")            
+               // WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove part.")
+                
+                Table(WRITE,"RESULT","VerifyBearing","PASS")
+                PSTATS(TRACE,"VerifyBearing","PASS")
+                SaveData("OILSLINGERScan","RESULTS","OILSLINGERScan","1") 
+                DigitalOutput(BrChkLightR,OFF)
+                DigitalOutput(BrChkLightG,OFF)
+                output(KEYENCE_Control,"LOF")
+            else
+                isBearingChkPass = 0
+                //isBearingChkPass = 1////linshi
+                DigitalOutput(BrChkLightR,ON)
+                DigitalOutput(BrChkLightG,OFF)
+                DisplayLine(1,"m-NOTE: Vision Check Fail..")            
+                //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                
+                //DigitalOutput(BrChkLightR,ON)
+                //DigitalOutput(BrChkLightG,ON)
+
+                
+            end
+                    
+        Until(isBearingChkPass ==1)
+        output(KEYENCE_Control,"LOF")
+        SaveData("Oil_Slinger","RESULTS","Oil_Slinger","1")
+    end
+    ////////////////////////////
+    //////////////////////////////////////////////////SR2000 JOB/////////////////////////////
+    //1:OILSLINGER   3:Journal Bearing 2pc Barcode  4:SPACER
+    //////////////////////////////////////////////////////////////////////////
+     ///zy add 1809 nautilus
+     
+     ///zy add 20201011
+    if((Model == 1) || (Model == 2)) //nautilus and M15 product N5+N6 type
+    
+    
+    // add DHF 20181210
+       
+        Pickbin(binOP02OILSLINGER2,"j-Pick Oil Slinger.")
+        SaveData("Oil_Slinger","RESULTS","Oil_Slinger","1")
+        output(KEYENCE_Control,"BLOAD,"+ProgramID_OS) //modify by lzr 20220617
+        delay(500)
+        if(Bypass(ISACTIVE,BypassCheckOILSlingercode) == False)
+            DisplayLine(2,"k - waiti Oil Slinger vision check .")  
+            isBearingChkPass = 0
+            repeat
+                sScanDisplay=""
+                output(KEYENCE_Control,"LON")
+                DigitalOutput(BrChkLightR,ON)
+                DigitalOutput(BrChkLightG,ON)
+                delay(500)
+                sScanDisplay=input(KEYENCE_Control)
+                if(ProgramID_OS==1)
+                    if(String(Find,sScanDisplay,OIL_SLINGER_2)>0)
+                        isBearingChkPass = 1
+                        Table(WRITE,"RESULT","BEARING",sScanDisplay)
+                        PSTATS(TRACE,"ITEM_2D_Code_" + "OIL_SLINGER" ,sScanDisplay)
+                    else
+                        isBearingChkPass = 0
+                   //isBearingChkPass = 1////linshi
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,OFF)
+                        DisplayLine(1,"m-NOTE:vision Check Fail. .")            
+                    //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                    end
+                end
+                if(ProgramID_OS==7)
+                    if(sScanDisplay!="")
+                        OSString1=STRING(PARSECOMMA,sScanDisplay)
+                        OSString2=STRING(PARSECOMMA,sScanDisplay)
+                        if(String(MID,OSString1,1,1)=="P")
+                            OSString=OSString1
+                        else
+                            OSString=OSString2
+                        end
+                        nlength=String(GETLENGTH,OSString)
+                        if(nlength>5)
+                            n1=string(MID,OSString,6,1)
+                            run INT36(n1,nl1)
+                            n2=string(MID,OSString,5,1)
+                            run INT36(n2,nl2)
+                            n3=string(MID,OSString,4,1)
+                            run INT36(n3,nl3)
+                            n4=string(MID,OSString,3,1)
+                            run INT36(n4,nl4)
+                            n5=string(MID,OSString,2,1)
+                            run INT36(n5,nl5)
+                            nl=nl1+ nl2*36+nl3*36*36+nl4*36*36*36+nl5*36*36*36*36
+                            n=ITOA(nl)
+                        end
+                        if((String(Find,OIL_SLINGER_2,"L")>0)&&(nlength>6))
+                            n=n+string(MID,OSString,7,1)
+                        end
+                        if(String(Find,n,OIL_SLINGER_2)>0)
+                            isBearingChkPass = 1
+                            n=""
+                        //Table(WRITE,"RESULT","Journal Bearings 1",JBString1+JBString2)--SEL202059
+                        else
+                            isBearingChkPass = 0
+                        //isBearingChkPass = 1////linshi
+                
+                        end
+                    end
+                end
+                if(isBearingChkPass == 1)
+                    DigitalOutput(BrChkLightR,OFF)
+                    DigitalOutput(BrChkLightG,ON)
+                    DisplayLine(1,"l-Vision Check Pass.")            
+                    WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove Journal Bearing and Install to Bearing Housing.")
+                
+                    Table(WRITERESULT,"VerifyBearing","PASS")
+                    PSTATS(TRACE,"VerifyBearing","PASS")
+                
+                    DigitalOutput(BrChkLightR,OFF)
+                    DigitalOutput(BrChkLightG,OFF)
+                    output(KEYENCE_Control,"LOF")
+                else
+                    DigitalOutput(BrChkLightR,ON)
+                    DigitalOutput(BrChkLightG,OFF)
+                    DisplayLine(1,"m-NOTE: Vision Check Fail. Please Pick a NEW ONE.")            
+                   //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                end     
+            Until(isBearingChkPass ==1)
+        else
+            PSTATS(TRACE,"bypass","0920_BypassCheckOILSlingercode") 
+        end
+        
+        DigitalOutput(OSSetupPosLight,ON))// OilSlinger an zhuang gong wei zhi shi deng 
+        DisplayLine(2,"o-1) Put Oil Slinger to Insertion Fixture.")
+        DigitalOutput(RingGuideLight1,ON)// OilSlinger an zhuang jia ju zhi shi deng 
+        WaitDigitalInput(RingGuideExistSensor1,Off,"p-2)Pick Ring Guide 1.")//an zhuang jia ju shi fou  na zou  
+        WaitDigitalInput(FixtureSensor,ON,"q-Put Ring Guide to Oil Slinger.")
+        DigitalOutput(RingGuideLight1,OFF)
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+ 
+        if(OPTIONEXISTS(SEAL_SPLIT_RING2))
+            DigitalOutput(MyCoinChanger5,ON)
+            WaitDigitalInput(MyCoinSensor5,OFF,"r-Waiting for Ring to Push Out.")
+        
+            WaitDigitalInput(MyCoinSensor5,ON,"s-Take S.Split Ring & fit onto O.Slinger.")
+        
+            DigitalOutput(MyCoinChanger5,OFF)
+        end
+        if(OPTIONEXISTS(SEAL_SPLIT_RING))
+            DigitalOutput(MyCoinChanger4,ON)
+            WaitDigitalInput(MyCoinSensor4,OFF,"r-Waiting for Ring to Push Out.")
+        
+            WaitDigitalInput(MyCoinSensor4,ON,"s-Take S.Split Ring & fit onto O.Slinger.")
+        
+            DigitalOutput(MyCoinChanger4,OFF)
+        end // modify by lzr 20220614
+        
+        DigitalOutput(RingGuideLight1,ON)
+        WaitDigitalInput(FixtureSensor,OFF,"v-Pick up Ring Guide Tool.")
+        WaitDigitalInput(1RingPresserSensor1,ON,"w-Returns Ring Guide Tool 1.")
+        WaitDigitalInput(RingGuideExistSensor1,ON,"w-Returns Ring Guide Tool 1.")
+        
+        DigitalOutput(RingGuideLight1,OFF)
+        if(NumRing == 2)    // for type 1 only
+            DigitalOutput(RingGuideLight2,ON)
+            WaitDigitalInput(RingGuideExistSensor2,OFF,"x-Pick Ring Guide 2.")
+            DigitalOutput(RingGuideLight2,OFF)
+            WaitDigitalInput(FixtureSensor,ON,"q-Put Ring Guide 2 to Oil Slinger.")
+                //ClearDisplay()
+                
+        
+            if(OPTIONEXISTS(SEAL_SPLIT_RING2))
+                DigitalOutput(MyCoinChanger5,ON)
+                WaitDigitalInput(MyCoinSensor5,OFF,"r-Waiting for Ring to Push Out.")
+        
+                WaitDigitalInput(MyCoinSensor5,ON,"s-Take S.Split Ring & fit onto O.Slinger.")
+        
+                DigitalOutput(MyCoinChanger5,OFF)
+            end
+            if(OPTIONEXISTS(SEAL_SPLIT_RING))
+                DigitalOutput(MyCoinChanger4,ON)
+                WaitDigitalInput(MyCoinSensor4,OFF,"r-Waiting for Ring to Push Out.")
+        
+                WaitDigitalInput(MyCoinSensor4,ON,"s-Take S.Split Ring & fit onto O.Slinger.")
+        
+                DigitalOutput(MyCoinChanger4,OFF)
+            end  // modify by lzr 20220614
+
+                //ClearDisplay()              
+ 
+                            
+            DigitalOutput(RingGuideLight2,ON)
+            WaitDigitalInput(FixtureSensor,OFF,"v-Pick up Ring Guide Tool.")
+            WaitDigitalInput(1RingPresserSensor2,ON,"w-Returns Ring Guide Tool 2.")
+            WaitDigitalInput(RingGuideExistSensor2,ON,"w-Returns Ring Guide Tool 2.")
+            
+            DigitalOutput(RingGuideLight2,OFF)
+        end
+            
+        DigitalOutput(OSSetupPosLight,OFF)
+        if(SlingerOringcheck == 1) // right old
+            DigitalOutput(PartCheckLight1Y,ON)
+            
+    
+            //WaitDigitalInputMask(maskOP02OSPartArrive,"y-Put O.Slinger Assy to Checking Fixture.")
+            delay(500)
+    
+            WaitDigitalInputMask(maskOP02OSAssembly,"y-Put O.Slinger Assy to Checking Fixture.")
+            DigitalOutput(PartCheckLight1G,ON)
+            DigitalOutput(PartCheckLight1R,OFF)
+            DigitalOutput(PartCheckLight1Y,OFF)
+            DisplayLine(2,"z-O.Slinger Assy Verification Passed.")
+            delay(200)
+    
+        end
+        DigitalOutput(PartCheckLight1G,OFF)
+        //DHF /////////////////////////////////////////////////////
+        if(NumToolType == 4)///New for nautilus
+        
+            DigitalOutput(ToolLight7G,ON)
+            WaitDigitalInput(1ToolSensor7,OFF,"O-3) Put Seal Ring Tool 1 to B.Housing.")
+            DigitalOutput(ToolLight7G,OFF)
+                    
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+            DigitalOutput(MyCoinChanger2,ON)
+            WaitDigitalInput(MyCoinSensor2,OFF,"P-Waiting for Split Ring to push out.")
+            WaitDigitalInput(MyCoinSensor2,ON,"V-Pick the two Split Rings.")
+            DigitalOutput(MyCoinChanger2,OFF)
+                    
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        
+            ClearDisplay()     
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        
+            DigitalOutput(ToolLight6G,ON)
+        
+                                                   
+            DigitalOutput(ToolLight7G,ON)
+            WaitDigitalInput(1ToolSensor7,ON,"U-Return Seal Ring Tool 1.")
+            DigitalOutput(ToolLight7G,OFF)
+            DigitalOutput(ToolLight6G,OFF)
+        
+            ClearDisplay()     
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+            DigitalOutput(ToolLight8G,ON)
+            WaitDigitalInput(1ToolSensor8,OFF,"X-Pick Seal Ring Tool 2.")
+            //DigitalOutput(ToolLight8G,OFF)
+            
+            
+            DigitalOutput(MyCoinChanger2,ON)
+            WaitDigitalInput(MyCoinSensor2,OFF,"P-Waiting for Split Ring to push out.")
+            WaitDigitalInput(MyCoinSensor2,ON,"V-Pick the two Split Rings.")
+            DigitalOutput(MyCoinChanger2,OFF)
+
+                    
+            //DisplayLine(1,"1) Pick Seal Ring and put into Tool.")
+            DigitalOutput(ToolLight6G,ON)
+            WaitDigitalInput(1ToolSensor6,OFF,"R-Pick Seal Ring Tool 3 & Press Ring.")
+            WaitDigitalInput(1ToolSensor8,ON,"X-Pick Seal Ring Tool 2.")
+            DigitalOutput(ToolLight6G,OFF)                    
+            DisplayLine(2,"Y-1) Install another Seal Ring to B.Housing.")
+                    
+            delay(1000)
+        
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+            DigitalOutput(ToolLight8G,ON)
+            WaitDigitalInput(1ToolSensor8,ON,"U-ReturnSeal Ring Tool 2.")
+            DigitalOutput(ToolLight8G,OFF)
+                    
+        end
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        
+        
+        if(NumToolType == 5)///New for CBE
+        
+            DigitalOutput(ToolLight10G,ON)
+            WaitDigitalInput(1ToolSensor10,OFF,"O-3) Put Seal Ring Tool 1 to B.Housing.")
+            DigitalOutput(ToolLight10G,OFF)
+                    
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+            DigitalOutput(MyCoinChanger2,ON)
+            WaitDigitalInput(MyCoinSensor2,OFF,"P-Waiting for Split Ring to push out.")
+            WaitDigitalInput(MyCoinSensor2,ON,"V-Pick the two Split Rings.")
+            DigitalOutput(MyCoinChanger2,OFF)
+                    
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        
+            ClearDisplay()     
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        
+            DigitalOutput(ToolLight9G,ON)
+        
+                                                   
+            DigitalOutput(ToolLight10G,ON)
+            WaitDigitalInput(1ToolSensor10,ON,"U-Return Seal Ring Tool 1.")
+            DigitalOutput(ToolLight10G,OFF)
+            DigitalOutput(ToolLight9G,OFF)
+        
+            ClearDisplay()     
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+            DigitalOutput(ToolLight11G,ON)
+            WaitDigitalInput(1ToolSensor11,OFF,"X-Pick Seal Ring Tool 2.")
+            DigitalOutput(ToolLight8G,OFF)
+            
+            ///zy add 20201011
+            if((Model == 1)&&(PushNum == 1)) // nautilus N6 5460317 ring twice ( N5 3521441 ring twice) but N5 3529166 one time
+               ///zy modify 210929
+                strRing = ReadData("BCAST","OPTION","RING_SPLIT") 
+                if(strRing!= "3529166")
+                
+                    DigitalOutput(MyCoinChanger2,ON)
+                    WaitDigitalInput(MyCoinSensor2,OFF,"P-Waiting for Split Ring to push out.")
+                    WaitDigitalInput(MyCoinSensor2,ON,"V-Pick the two Split Rings.")
+                    DigitalOutput(MyCoinChanger2,OFF)
+                end
+            end
+                    
+            //DisplayLine(1,"1) Pick Seal Ring and put into Tool.")
+            DigitalOutput(ToolLight9G,ON)
+            WaitDigitalInput(1ToolSensor9,OFF,"R-Pick Seal Ring Tool 3 & Press Ring.")
+            WaitDigitalInput(1ToolSensor11,ON,"X-Pick Seal Ring Tool 2.")
+            DigitalOutput(ToolLight9G,OFF)                    
+            DisplayLine(2,"Y-1) Install another Seal Ring to B.Housing.")
+                    
+            delay(1000)
+        
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+            DigitalOutput(ToolLight11G,ON)
+            WaitDigitalInput(1ToolSensor8,ON,"U-Return Seal Ring Tool 2.")
+            DigitalOutput(ToolLight11G,OFF)
+                    
+        end
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+    
+        ///zy modify 20201011
+        if(Model == 1)
+     
+        //JBVisionScan first
+            output(KEYENCE_Control,"BLOAD,"+ProgramID_JB)
+            Pickbin(binOP02LDBearing,"g- Pick 1 Journal Bearings.")
+        //   20190213  DHF
+            if(Bypass(ISACTIVE,BypassCheckJBcode) == False)
+                DisplayLine(2,"c - wait Journal Bearings vision check .")
+                isBearingChkPass = 0
+           
+                repeat
+                    output(KEYENCE_Control,"LON")
+                    DigitalOutput(BrChkLightR,ON)
+                    DigitalOutput(BrChkLightG,ON)
+                    delay(500)
+                    sScanDisplay=""
+                    sScanDisplay=input(KEYENCE_Control)
+                    if(sScanDisplay!="")
+                        JBString1=STRING(PARSECOMMA,sScanDisplay)
+                        JBString2=STRING(PARSECOMMA,sScanDisplay)
+                        if(String(MID,JBString1,1,1)=="P")
+                            JBString=JBString1
+                        else
+                            JBString=JBString2
+                        end
+                        nlength=String(GETLENGTH,JBString)
+                        if(nlength>5)
+                            n1=string(MID,JBString,6,1)
+                            run INT36(n1,nl1)
+                            n2=string(MID,JBString,5,1)
+                            run INT36(n2,nl2)
+                            n3=string(MID,JBString,4,1)
+                            run INT36(n3,nl3)
+                            n4=string(MID,JBString,3,1)
+                            run INT36(n4,nl4)
+                            n5=string(MID,JBString,2,1)
+                            run INT36(n5,nl5)
+                            nl=nl1+ nl2*36+nl3*36*36+nl4*36*36*36+nl5*36*36*36*36
+                            n=ITOA(nl)
+                        end
+                        if((String(Find,LDBEARING,"L")>0)&&(nlength>6))
+                            n=n+string(MID,JBString,7,1)
+                        end
+                        if(String(Find,n,LDBEARING)>0)
+                            isBearingChkPass = 1
+                        //Table(WRITE,"RESULT","Journal Bearings 1",JBString1+JBString2)--SEL202059
+                            n= ""
+                        else
+                            isBearingChkPass = 0
+                        //isBearingChkPass = 1////linshi
+                
+                        end
+                    end
+                    if(isBearingChkPass == 1)
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,ON)
+                        DisplayLine(1,"l-Journal Bearing Check Pass.")            
+                        WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove Journal Bearing and Install to Bearing Housing.")
+                        PSTATS(TRACE,"ITEM_2D_Code_" + "Journal_Bearings" ,JBString1+"_"+JBString2)
+                        Table(WRITERESULT,"VerifyBearing","PASS")
+                        PSTATS(TRACE,"VerifyBearing","PASS")
+                
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,OFF)
+                        output(KEYENCE_Control,"LOF")
+                    else
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,OFF)
+                        DisplayLine(1,"m-NOTE: Vision Check Fail. Please Pick a NEW one.")            
+            //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,ON)
+                    end   
+                    
+                Until(isBearingChkPass ==1)
+            else
+                PSTATS(TRACE,"bypass","0920_BypassCheckJBcode") 
+            end
+       
+       
+        // 20190213  DHF   
+ 
+            DisplayLine(3,"J-2) Fit JB to the SW") ///new HIM
+            DigitalOutput(ShowPic,ON)
+            DisplayLine(3,"^-2) Place JB to the Pic")// add by lzr20220815
+            delay(2000) 
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        //SR2000 CHECK SSPACER
+            if(String(Find,SPACER_BEARING,"L")>0)
+                output(KEYENCE_Control,"BLOAD,"+ProgramID_SPACER)
+            else
+                output(KEYENCE_Control,"BLOAD,"+ProgramID_SPACER)
+            end
+            //output(KEYENCE_Control,"BLOAD,4")
+            delay(500)
+            Pickbin(binOP02Spacerbearing,"d-2) Pick spacer.")
+            if(Bypass(ISACTIVE,BypassCheckSpacercode) == false) //modify lzr spacer20221012
+            
+                DisplayLine(2,"[ - waiti spacer vision check .")
+        
+        
+                isBearingChkPass = 0
+                
+                repeat
+                    output(KEYENCE_Control,"LON")
+                    DigitalOutput(BrChkLightR,ON)
+                    DigitalOutput(BrChkLightG,ON)
+                    delay(500)
+                    sScanDisplay=input(KEYENCE_Control)
+                    nlength=0
+                    n=""
+                    if(sScanDisplay!="")
+                        SPString1=STRING(PARSECOMMA,sScanDisplay)
+                        SPString2=STRING(PARSECOMMA,sScanDisplay)
+                        if(String(MID,SPString1,1,1)=="P")
+                            SPString=SPString1
+                        else
+                            SPString=SPString2
+                        end
+                        nlength=String(GETLENGTH,SPString)
+                        if(nlength>5)
+                            n1=string(MID,SPString,6,1)
+                            run INT36(n1,nl1)
+                            n2=string(MID,SPString,5,1)
+                            run INT36(n2,nl2)
+                            n3=string(MID,SPString,4,1)
+                            run INT36(n3,nl3)
+                            n4=string(MID,SPString,3,1)
+                            run INT36(n4,nl4)
+                            n5=string(MID,SPString,2,1)
+                            run INT36(n5,nl5)
+                            nl=nl1+ nl2*36+nl3*36*36+nl4*36*36*36+nl5*36*36*36*36
+                            n=ITOA(nl)
+                        end
+                    end
+                    if((String(Find,SPACER_BEARING,"L")>0)&&(nlength>6))
+                        n=n+string(MID,SPString,7,1)
+                    end
+                    /*if(nlength>6)
+                        n=n+string(MID,SPString,7,1)
+                    end*/
+                    if(n==SPACER_BEARING)
+                        isBearingChkPass = 1
+                        SPString=SPString1+"_"+SPString2
+                    //Table(WRITE,"RESULT","SPACER_BEARING",SPString)--SEL20200509
+                        PSTATS(TRACE,"ITEM_2D_Code_" + "SPACER" ,SPString)
+                    else
+                        isBearingChkPass = 0
+                   //isBearingChkPass = 1////linshi
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,OFF)
+                        DisplayLine(1,"m-NOTE:vision Check Fail. .")            
+                    //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                    end
+                    if(isBearingChkPass == 1)
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,ON)
+                        
+                        DisplayLine(1,"l-Vision Check Pass.")            
+                        WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove Journal Bearing and Install to Bearing Housing.")
+                        Table(WRITERESULT,"VerifySPACER","PASS")
+                        PSTATS(TRACE,"VerifySPACER","PASS")
+                
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,OFF)
+                        output(KEYENCE_Control,"LOF")
+                    else
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,OFF)
+                        DisplayLine(1,"m-NOTE: Vision Check Fail. Please Pick a NEW one.")            
+                   //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,ON)
+                    end     
+                Until(isBearingChkPass == 1)
+            else
+                PSTATS(TRACE,"bypass","0920_BypassCheckJBcode") 
+            end
+  
+          
+            DisplayLine(3,"f-4) Fit spacer to the SW")
+         //   20190213  DHF
+        //JBVisionScan second
+            output(KEYENCE_Control,"BLOAD,"+ProgramID_JB)
+            delay(500)
+            Pickbin(binOP02LDBearing,"g-2) Pick 1 Journal Bearings.")
+            sScanFeedback = input(KEYENCE_Control)
+            if(Bypass(ISACTIVE,BypassCheckJBcode) == false) // MODIFY JB LZR20221012
+                DisplayLine(2,"c - wait Journal Bearings vision check .")
+                isBearingChkPass = 0
+        
+                repeat
+                    output(KEYENCE_Control,"LON")
+                    DigitalOutput(BrChkLightR,ON)
+                    DigitalOutput(BrChkLightG,ON)
+                    delay(500)
+                    sScanDisplay=input(KEYENCE_Control)
+                //sScanDisplay="P39T8D,DETF"
+                    if(sScanDisplay!="")
+                        JBString1=STRING(PARSECOMMA,sScanDisplay)
+                        JBString2=STRING(PARSECOMMA,sScanDisplay)
+                        if(String(MID,JBString1,1,1)=="P")
+                            JBString=JBString1
+                        else
+                            JBString=JBString2
+                        end
+                        nlength=String(GETLENGTH,JBString)
+                        if(nlength>5)
+                            n1=string(MID,JBString,6,1)
+                            run INT36(n1,nl1)
+                            n2=string(MID,JBString,5,1)
+                            run INT36(n2,nl2)
+                            n3=string(MID,JBString,4,1)
+                            run INT36(n3,nl3)
+                            n4=string(MID,JBString,3,1)
+                            run INT36(n4,nl4)
+                            n5=string(MID,JBString,2,1)
+                            run INT36(n5,nl5)
+                            nl=nl1+ nl2*36+nl3*36*36+nl4*36*36*36+nl5*36*36*36*36
+                            n=ITOA(nl)
+                        end
+                        if((String(Find,LDBEARING,"L")>0)&&(nlength>6))
+                            n=n+string(MID,JBString,7,1)
+                        end
+                        if(String(Find,n,LDBEARING)>0)
+                            isBearingChkPass = 1
+                        //Table(WRITE,"RESULT","Journal Bearings 1",JBString1+JBString2)--SEL2
+                        else
+                            isBearingChkPass = 0
+                        //isBearingChkPass = 1////linshi
+               
+                        end
+                    end
+                    if(isBearingChkPass == 1)
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,ON)
+                        DisplayLine(1,"l-Journal Bearing Check Pass.")            
+                        WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove Journal Bearing and Install to Bearing Housing.")
+                        PSTATS(TRACE,"ITEM_2D_Code_" + "Journal_Bearings" ,JBString1+"_"+JBString2)
+                        Table(WRITERESULT,"VerifyBearing","PASS")
+                        PSTATS(TRACE,"VerifyBearing","PASS")
+                
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,OFF)
+                        output(KEYENCE_Control,"LOF")
+                    else
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,OFF)
+                        DisplayLine(1,"m-NOTE: Vision Check Fail. Please Pick a NEW one.")            
+            //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,ON)
+                    end   
+                    
+                Until(isBearingChkPass ==1)
+            else
+                PSTATS(TRACE,"bypass","0920_BypassCheckJBcode") 
+        //BypassCheckJBcode
+            end
+             //20190213  DHF
+        end
+        DigitalOutput(ShowPic,OFF)
+    
+     ///zy add 20201011
+        if(Model == 2)  //M15 product N5+N6 type
+            /// WaitDigitalInputMask(maskOP02ToolsOnPosition,"=-Make Sure All Tools in Position...")
+            WaitDigitalInputMask(maskOP02JBearingSnrEmpty,"A-JB Verification Fixture is Not Empty!")
+            DisplayLine(2,"B-1) Load Bearing Housing to Fixture.")
+            //Pickbin(binOP02RingRetaining,"2) Pick two retaining ring.")
+
+           //zy modify 10205
+            DigitalOutput(MyCoinChanger1,ON)
+            WaitDigitalInput(MyCoinSensor1,OFF,"C-2) Waiting for R.Ring to push out...")
+            WaitDigitalInput(MyCoinSensor1,ON,"E-1) Install one Retaining Ring into BH.")
+           //WaitDigitalInput(MyCoinSensor1,ON,"D-2) Pick two Retaining Rings.")  ///
+           //DisplayLine(2,"E-1) Install one Retaining Ring into BH.")  ///
+            DigitalOutput(MyCoinChanger1,OFF)
+            
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            
+            DisplayLine(2,"E-1) Install one Retaining Ring into BH.")
+           //----ShenM 20171028----
+            if(Bypass(ISACTIVE,BypassCheckcode) == False)
+                ReScanInput=Input(OP02S1_Data7)
+                if(ReScanInput==1)
+                    ReScanFlag = 1
+                end
+                if((gOP02S1_FormNO != ASSEMBLY_FORMNO) || (DoneNum == 0)||(ReScanFlag == 1))
+                    strPrompt = "b- Scan the Tank 2D code"
+                    strSeq = sSeq
+                    strIdenfifier = "JB"
+                    Run ReadBarcode(BEARING,strPrompt,strSeq,strIdenfifier)
+                    Table(WRITE,"RESULTS","SCAN",1)
+                end   
+            end
+            //-------------------
+                    
+           ///zy modify 150831 CHN change
+            if(UseBearingTest == 1) 
+                Pickbin(binOP02Bearingtest,"F-2) Pick 2 Journal Bearings.")
+            else
+       
+        
+                Pickbin(binOP02Bearing,"F-2) Pick 2 Journal Bearings.")
+        
+         
+                DigitalOutput(PartCheckLightR,ON)
+                DigitalOutput(PartCheckLightG,ON)
+                WaitDigitalInput(1VerifyHandExistSnr,ON,"G-Verify Journal Bearing.")
+                Delay(1000)
+                WaitDigitalInput(1VerifyHandExistSnr,OFF,"G-Verify Journal Bearing.")
+                DigitalOutput(PartCheckLightG,OFF)
+                WaitDigitalInputMask(maskOP02JBearingSnr,"Z-Verify Journal Bearing.")
+            
+                DigitalOutput(PartCheckLightR,OFF)
+                DigitalOutput(PartCheckLightG,ON)
+        
+            end 
+   
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+    
+    
+            
+            WaitDigitalInput(1VerifyHandExistSnr,ON,"H-Install one Journal Bearing to BH.")
+            WaitDigitalInput(1VerifyHandExistSnr,OFF,"H-Install one Journal Bearing to BH.")
+            DigitalOutput(PartCheckLightG,OFF)
+            ///zy add 190219 JB first scan
+    
+            if(NeedJBScan==1)
+                DisplayLine(2,"c - waiti  JB vision check .")
+                isBearingChkPass = 0
+                output(KEYENCE_Control,"BLOAD,2")
+                repeat
+                    sScanDisplay = ""
+                    output(KEYENCE_Control,"LON")
+                    DigitalOutput(BrChkLightR,ON)
+            //DigitalOutput(BrChkLightG,ON)
+                    delay(500)
+                    sScanDisplay=input(KEYENCE_Control)
+            
+                    if(String(Find,sScanDisplay,Bearing)>0)//Bearing
+                        isBearingChkPass = 1
+                        Table(WRITE,"RESULT","BEARING",sScanDisplay)
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,ON)
+                        DisplayLine(1,"l-Journal Bearing Check Pass.")            
+                        WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove Journal Bearing and Install to Bearing Housing.")
+                
+                        Table(WRITERESULT,"VerifyBearing","PASS")
+                        PSTATS(TRACE,"VerifyBearing","PASS")
+                
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,OFF)
+                        output(KEYENCE_Control,"LOF")
+                    else
+                        isBearingChkPass = 0
+                //isBearingChkPass = 1////linshi
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,OFF)
+                        DisplayLine(1,"m-NOTE: Vision Check Fail. Please Pick a NEW one.")            
+              //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,ON)
+                
+                    end
+                    
+                Until(isBearingChkPass ==1)
+                output(KEYENCE_Control,"LOF")
+            end
+            //zy add 130205
+            DigitalOutput(MyCoinChanger1,ON)
+            WaitDigitalInput(MyCoinSensor1,OFF,"K-3) Waiting for R.Ring to push out.")
+            //WaitDigitalInput(MyCoinSensor1,ON,"L-3) Pick two Retaining Rings.")
+            WaitDigitalInput(MyCoinSensor1,ON,"I-1) Install another R.Ring to BH.")  
+            DigitalOutput(MyCoinChanger1,OFF)
+    
+            //DisplayLine(2,"I-1) Install another R.Ring to BH.")
+            DisplayLine(3,"J-2) Turn Bearing Housing Upside Down")
+            delay(2000)
+           
+            DigitalOutput(MyCoinChanger1,ON)
+            WaitDigitalInput(MyCoinSensor1,OFF,"K-3) Waiting for R.Ring to push out.")
+            //WaitDigitalInput(MyCoinSensor1,ON,"L-3) Pick two Retaining Rings.") ///
+            WaitDigitalInput(MyCoinSensor1,ON,"E-1) Install one Retaining Ring into BH.")
+            DigitalOutput(MyCoinChanger1,OFF)
+            
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            
+            DigitalOutput(PartCheckLightG,ON)
+            DisplayLine(2,"E-1) Install one Retaining Ring into BH.")
+            
+            DigitalOutput(PartCheckLightG,ON)
+            WaitDigitalInputMask(maskOP02JBearingSnrEmpty,"M-2) Pick the other Journal Bearing.")
+            DigitalOutput(PartCheckLightG,OFF)
+            ///zy add 190219 JB second scan
+    
+            if(NeedJBScan==1)
+                DisplayLine(2,"c - waiti Journal Bearings vision check .")
+                isBearingChkPass = 0
+                repeat
+                    sScanDisplay = ""
+                    output(KEYENCE_Control,"LON")
+                    DigitalOutput(BrChkLightR,ON)
+            //DigitalOutput(BrChkLightG,ON)
+                    delay(500)
+                    sScanDisplay=input(KEYENCE_Control)
+            
+                    if(String(Find,sScanDisplay,Bearing)>0)//Bearing
+                        isBearingChkPass = 1
+                        Table(WRITE,"RESULT","BEARING",sScanDisplay)
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,ON)
+                        DisplayLine(1,"l-Journal Bearing Check Pass.")            
+                        WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove Journal Bearing and Install to Bearing Housing.")
+                
+                        Table(WRITERESULT,"VerifyBearing","PASS")
+                        PSTATS(TRACE,"VerifyBearing","PASS")
+                
+                        DigitalOutput(BrChkLightR,OFF)
+                        DigitalOutput(BrChkLightG,OFF)
+                        output(KEYENCE_Control,"LOF")
+                    else
+                        isBearingChkPass = 0
+                //isBearingChkPass = 1////linshi
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,OFF)
+                        DisplayLine(1,"m-NOTE: Vision Check Fail. Please Pick a NEW one.")            
+            //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                
+                        DigitalOutput(BrChkLightR,ON)
+                        DigitalOutput(BrChkLightG,ON)
+                
+                    end
+                    output(KEYENCE_Control,"LOF")
+                    
+                Until(isBearingChkPass ==1)
+            end
+          //zy add 130205
+            DigitalOutput(MyCoinChanger1,ON)
+            WaitDigitalInput(MyCoinSensor1,OFF,"K-3) Waiting for R.Ring to push out.")
+           //WaitDigitalInput(MyCoinSensor1,ON,"L-3) Pick two Retaining Rings.")
+            WaitDigitalInput(MyCoinSensor1,ON,"I-1) Install another R.Ring to BH.")
+            DigitalOutput(MyCoinChanger1,OFF)    
+           
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            DisplayLine(2,"N-1) Install Journal Bearing to BH.")
+            DisplayLine(3,"I-2) Install the other R.Ring to BH.")
+            
+            delay(2000)
+        end
+      
+        //DHF //////////////////////////////////////////////////////  
+  
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        if(OPTIONEXISTS(ACTUATOR))
+            if(OPTIONEXISTS(SPACER_MOUNTING))
+                if(Bypass(ISACTIVE,BypassCheckcode) == False)
+                    ReScanInput=Input(OP02S1_Data7)
+                    if(ReScanInput==1)
+                        ReScanFlag = 1
+                    end
+                    if((gOP02S1_FormNO != ASSEMBLY_FORMNO) || (DoneNum == 0)||(ReScanFlag == 1))
+                        strPrompt = "[- Scan the SPACER_MOUNTING 2D code"
+                        strSeq = sSeq
+                        strIdenfifier = "SPACER"
+                       ///20210617 Run ReadBarcode(SPACER_MOUNTING,strPrompt,strSeq,strIdenfifier)
+                        Table(WRITE,"RESULTS","SCAN",1)
+                    end   
+                end
+                ClearDisplay()
+                DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                //Pickbin(binOP02bracketspacer,"d-Pick Spacer.")
+            end
+            if(OPTIONEXISTS(BRACKET_ACTUATOR))
+                ClearDisplay()
+                DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                DisplayLine(2,"\-1) PICK up BRACKET_ACTUATOR.")
+                Delay(1000)
+            end
+            if(OPTIONEXISTS(SCREW_FOR_BRACKET))
+                if(Bypass(ISACTIVE,BypassCheckcode) == False)
+                    ReScanInput=Input(OP02S1_Data7)
+                    if(ReScanInput==1)
+                        ReScanFlag = 1
+                    end
+                    if((gOP02S1_FormNO != ASSEMBLY_FORMNO) || (DoneNum == 0)||(ReScanFlag == 1))
+                        strPrompt = "]- Scan the SCREW_FOR_BRACKET 2D code"
+                        strSeq = sSeq
+                        strIdenfifier = "SCREW_FOR_BRACKET"
+                        //20210617Run ReadBarcode(SCREW_FOR_BRACKET,strPrompt,strSeq,strIdenfifier)
+                        Table(WRITE,"RESULTS","SCAN",1)
+                    end   
+                end
+                ClearDisplay()
+                DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                //Pickbin(binOP02bracketscrew,"]-Pick SCREW_FOR_BRACKET .")--SD
+            end
+            if(OPTIONEXISTS(WASHER_PLAIN))
+                if(Bypass(ISACTIVE,BypassCheckcode) == False)
+                    ReScanInput=Input(OP02S1_Data7)
+                    if(ReScanInput==1)
+                        ReScanFlag = 1
+                    end
+                    if((gOP02S1_FormNO != ASSEMBLY_FORMNO) || (DoneNum == 0)||(ReScanFlag == 1))
+                        strPrompt = "_- Scan the WASHER_PLAIN 2D code"
+                        strSeq = sSeq
+                        strIdenfifier = "WASHER_PLAIN"
+                        //20210617Run ReadBarcode(WASHER_PLAIN,strPrompt,strSeq,strIdenfifier)
+                        Table(WRITE,"RESULTS","SCAN",1)
+                  
+                    end   
+            
+                end
+                ClearDisplay()
+                DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                Pickbin(binOP02bracketwasher,"]-Pick WASHER_PLAIN ...")
+            end
+            if(OPTIONEXISTS(BRACKET_ACTUATOR))
+                ClearDisplay()
+                DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                DisplayLine(2,">-1) Install BRACKET_ACTUATOR.")
+                Delay(1000)
+            end
+   
+        end
+        
+        Output(OP02S1_Data7,0)
+            //////////////////////////////////////////
+        
+        //DisplayLine(3,"J-2) Fit JB to the SW")
+        
+        WaitDigitalInput(OperatorSwitch1,ON,":-Press Buttons to Release Pallet.")
+        CycleTime(END)  
+                 
+        if(Model == 1) 
+            PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"OP03S1")
+            Delay(50)
+            While(true)
+                PalletData = PALLETSEQUENCE_GETDATA(palletID)
+                PalletID    = STRING(PARSECOMMA,PalletData)
+                Destination = STRING(PARSECOMMA,PalletData)
+                PartType    = STRING(PARSECOMMA,PalletData)
+                PresentSeq  = STRING(PARSECOMMA,PalletData)    
+                BreakIf (Destination == "OP03S1")
+                PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"OP03S1")
+                Delay(50)
+            end  
+            
+        else  //modle=2 go OP40
+              
+            PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"OP04S1")
+            Delay(50)
+            While(true)
+                PalletData = PALLETSEQUENCE_GETDATA(palletID)
+                PalletID    = STRING(PARSECOMMA,PalletData)
+                Destination = STRING(PARSECOMMA,PalletData)
+                PartType    = STRING(PARSECOMMA,PalletData)
+                PresentSeq  = STRING(PARSECOMMA,PalletData)    
+                BreakIf (Destination == "OP04S1")
+                PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"OP04S1")
+                Delay(50)
+            end  
+        end
+                      
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        DigitalOutput(ReleasePallet,ON) 
+        WaitDigitalInput(PalletOnStation,OFF,";-Waiting for Pallet Release...") 
+    
+        DigitalOutput(ReleasePallet,OFF)  
+    
+        run UpdateDoneNum(sSeq)
+    
+        if(STRING(FIND,PartType,"R") == 0)
+            gOP02S1_DoneNum = gOP02S1_DoneNum +1 
+        end
+        
+        return       
+    
+        
+    end   
+ 
+
+   /// normal product sequence  
+   /// WaitDigitalInputMask(maskOP02ToolsOnPosition,"=-Make Sure All Tools in Position...")
+    WaitDigitalInputMask(maskOP02JBearingSnrEmpty,"A-JB Verification Fixture is Not Empty!")
+    DisplayLine(2,"B-1) Load Bearing Housing to Fixture.")
+            //Pickbin(binOP02RingRetaining,"2) Pick two retaining ring.")
+
+    //zy modify 10205
+    DigitalOutput(MyCoinChanger1,ON)
+    WaitDigitalInput(MyCoinSensor1,OFF,"C-2) Waiting for R.Ring to push out...")
+    WaitDigitalInput(MyCoinSensor1,ON,"E-1) Install one Retaining Ring into BH.")
+    //WaitDigitalInput(MyCoinSensor1,ON,"D-2) Pick two Retaining Rings.")  ///
+    //DisplayLine(2,"E-1) Install one Retaining Ring into BH.")  ///
+    DigitalOutput(MyCoinChanger1,OFF)
+            
+    ClearDisplay()
+    DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            
+    DisplayLine(2,"E-1) Install one Retaining Ring into BH.")
+    //----ShenM 20171028----
+    if(Bypass(ISACTIVE,BypassCheckcode) == False)
+        ReScanInput=Input(OP02S1_Data7)
+        if(ReScanInput==1)
+            ReScanFlag = 1
+        end
+        if((gOP02S1_FormNO != ASSEMBLY_FORMNO) || (DoneNum == 0)||(ReScanFlag == 1))
+            strPrompt = "b- Scan the Tank 2D code"
+            strSeq = sSeq
+            strIdenfifier = "JB"
+            Run ReadBarcode(BEARING,strPrompt,strSeq,strIdenfifier)
+            Table(WRITE,"RESULTS","SCAN",1)
+        end 
+    else
+        PSTATS(TRACE,"bypass","0920_BypassCheckcode")   
+    end
+    //-------------------
+   
+   
+                    
+    ///zy modify 150831 CHN change
+    if(UseBearingTest == 1) 
+        Pickbin(binOP02Bearingtest,"F-2) Pick 2 Journal Bearings.")
+    else
+       
+        
+        Pickbin(binOP02Bearing,"F-2) Pick 2 Journal Bearings.")
+        
+         
+        DigitalOutput(PartCheckLightR,ON)
+        DigitalOutput(PartCheckLightG,ON)
+        WaitDigitalInput(1VerifyHandExistSnr,ON,"G-Verify Journal Bearing.")
+        Delay(1000)
+        WaitDigitalInput(1VerifyHandExistSnr,OFF,"G-Verify Journal Bearing.")
+        DigitalOutput(PartCheckLightG,OFF)
+        WaitDigitalInputMask(maskOP02JBearingSnr,"Z-Verify Journal Bearing.")
+            
+        DigitalOutput(PartCheckLightR,OFF)
+        DigitalOutput(PartCheckLightG,ON)
+        
+    end 
+   
+    ClearDisplay()
+    DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+    
+    
+            
+    WaitDigitalInput(1VerifyHandExistSnr,ON,"H-Install one Journal Bearing to BH.")
+    WaitDigitalInput(1VerifyHandExistSnr,OFF,"H-Install one Journal Bearing to BH.")
+    DigitalOutput(PartCheckLightG,OFF)
+     ///zy add 190219 JB first scan
+    
+    if(NeedJBScan==1)
+        DisplayLine(2,"c - waiti  JB vision check .")
+        isBearingChkPass = 0
+        output(KEYENCE_Control,"BLOAD,2")
+        repeat
+            sScanDisplay = ""
+            output(KEYENCE_Control,"LON")
+            DigitalOutput(BrChkLightR,ON)
+            //DigitalOutput(BrChkLightG,ON)
+            delay(500)
+            sScanDisplay=input(KEYENCE_Control)
+            
+            if(String(Find,sScanDisplay,Bearing)>0)//Bearing
+                isBearingChkPass = 1
+                Table(WRITE,"RESULT","BEARING",sScanDisplay)
+                DigitalOutput(BrChkLightR,OFF)
+                DigitalOutput(BrChkLightG,ON)
+                DisplayLine(1,"l-Journal Bearing Check Pass.")            
+                WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove Journal Bearing and Install to Bearing Housing.")
+                
+                Table(WRITERESULT,"VerifyBearing","PASS")
+                PSTATS(TRACE,"VerifyBearing","PASS")
+                
+                DigitalOutput(BrChkLightR,OFF)
+                DigitalOutput(BrChkLightG,OFF)
+                output(KEYENCE_Control,"LOF")
+            else
+                isBearingChkPass = 0
+                //isBearingChkPass = 1////linshi
+                DigitalOutput(BrChkLightR,ON)
+                DigitalOutput(BrChkLightG,OFF)
+                DisplayLine(1,"m-NOTE: Vision Check Fail. Please Pick a NEW one.")            
+            //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                
+                DigitalOutput(BrChkLightR,ON)
+                DigitalOutput(BrChkLightG,ON)
+
+                
+            end
+                    
+        Until(isBearingChkPass ==1)
+        output(KEYENCE_Control,"LOF")
+    end
+    //zy add 130205
+    DigitalOutput(MyCoinChanger1,ON)
+    WaitDigitalInput(MyCoinSensor1,OFF,"K-3) Waiting for R.Ring to push out.")
+    //WaitDigitalInput(MyCoinSensor1,ON,"L-3) Pick two Retaining Rings.")
+    WaitDigitalInput(MyCoinSensor1,ON,"I-1) Install another R.Ring to BH.")  
+    DigitalOutput(MyCoinChanger1,OFF)
+          
+    
+    //DisplayLine(2,"I-1) Install another R.Ring to BH.")
+    DisplayLine(3,"J-2) Turn Bearing Housing Upside Down")
+    delay(2000)
+           
+    DigitalOutput(MyCoinChanger1,ON)
+    WaitDigitalInput(MyCoinSensor1,OFF,"K-3) Waiting for R.Ring to push out.")
+    //WaitDigitalInput(MyCoinSensor1,ON,"L-3) Pick two Retaining Rings.") ///
+    WaitDigitalInput(MyCoinSensor1,ON,"E-1) Install one Retaining Ring into BH.")
+    DigitalOutput(MyCoinChanger1,OFF)
+            
+    ClearDisplay()
+    DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            
+    DigitalOutput(PartCheckLightG,ON)
+    DisplayLine(2,"E-1) Install one Retaining Ring into BH.")
+            
+    DigitalOutput(PartCheckLightG,ON)
+    WaitDigitalInputMask(maskOP02JBearingSnrEmpty,"M-2) Pick the other Journal Bearing.")
+    DigitalOutput(PartCheckLightG,OFF)
+     ///zy add 190219 JB second scan
+    
+    if(NeedJBScan==1)
+        DisplayLine(2,"c - waiti Journal Bearings vision check .")
+        isBearingChkPass = 0
+        repeat
+            sScanDisplay = ""
+            output(KEYENCE_Control,"LON")
+            DigitalOutput(BrChkLightR,ON)
+            //DigitalOutput(BrChkLightG,ON)
+            delay(500)
+            sScanDisplay=input(KEYENCE_Control)
+            
+            if(String(Find,sScanDisplay,Bearing)>0)//Bearing
+                isBearingChkPass = 1
+                Table(WRITE,"RESULT","BEARING",sScanDisplay)
+                DigitalOutput(BrChkLightR,OFF)
+                DigitalOutput(BrChkLightG,ON)
+                DisplayLine(1,"l-Journal Bearing Check Pass.")            
+                WaitDigitalInput(BrChkBearingOnSite,OFF,"n-Remove Journal Bearing and Install to Bearing Housing.")
+                
+                Table(WRITERESULT,"VerifyBearing","PASS")
+                PSTATS(TRACE,"VerifyBearing","PASS")
+                
+                DigitalOutput(BrChkLightR,OFF)
+                DigitalOutput(BrChkLightG,OFF)
+                output(KEYENCE_Control,"LOF")
+            else
+                isBearingChkPass = 0
+                //isBearingChkPass = 1////linshi
+                DigitalOutput(BrChkLightR,ON)
+                DigitalOutput(BrChkLightG,OFF)
+                DisplayLine(1,"m-NOTE: Vision Check Fail. Please Pick a NEW one.")            
+            //WaitDigitalInput(BrChkBearingOnSite,OFF,"Remove Journal Bearing and Pick new Journal Bearing.")
+                
+                DigitalOutput(BrChkLightR,ON)
+                DigitalOutput(BrChkLightG,ON)
+
+                
+            end
+            output(KEYENCE_Control,"LOF")
+                    
+        Until(isBearingChkPass ==1)
+    end
+    //zy add 130205
+    DigitalOutput(MyCoinChanger1,ON)
+    WaitDigitalInput(MyCoinSensor1,OFF,"K-3) Waiting for R.Ring to push out.")
+    //WaitDigitalInput(MyCoinSensor1,ON,"L-3) Pick two Retaining Rings.")
+    WaitDigitalInput(MyCoinSensor1,ON,"I-1) Install another R.Ring to BH.")
+    DigitalOutput(MyCoinChanger1,OFF)
+         
+    
+           
+    ClearDisplay()
+    DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+    DisplayLine(2,"N-1) Install Journal Bearing to BH.")
+    DisplayLine(3,"I-2) Install the other R.Ring to BH.")
+            
+    delay(2000)
+    /// zy 120419     
+    
+    if(NumToolType == 1)
+        DigitalOutput(ToolLight1,ON)
+        WaitDigitalInput(1ToolSensor1,OFF,"O-3) Put Seal Ring Tool 5 to B.Housing.")
+        DigitalOutput(ToolLight1,OFF)
+                
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        DigitalOutput(MyCoinChanger2,ON)
+        WaitDigitalInput(MyCoinSensor2,OFF,"P-Waiting for Split Ring to push out.")
+        WaitDigitalInput(MyCoinSensor2,ON,"Q-Pick Split Ring.")
+        DigitalOutput(MyCoinChanger2,OFF)
+                
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        DigitalOutput(ToolLight2,ON)
+        WaitDigitalInput(1ToolSensor2,OFF,"R-Pick Seal Ring Tool 4.")
+        DigitalOutput(ToolLight2,OFF)
+        DisplayLine(2,"S-1) Install Seal Ring to B.Housing.")
+        delay(1000)
+                
+        DigitalOutput(ToolLight2,ON)
+        WaitDigitalInput(1ToolSensor2,ON,"T-2) Return Seal Ring Tool 4.")
+        DigitalOutput(ToolLight2,OFF)
+                                       
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                
+        DigitalOutput(ToolLight1,ON)
+        WaitDigitalInput(1ToolSensor1,ON,"U-Return Seal Ring Tool 5.")
+        DigitalOutput(ToolLight1,OFF)
+                    
+    end
+    if(NumToolType == 2)
+        DigitalOutput(ToolLight5,ON)
+        WaitDigitalInput(1ToolSensor5,OFF,"O-3) Put Seal Ring Tool 1 to B.Housing.")
+        DigitalOutput(ToolLight5,OFF)
+                    
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+        DigitalOutput(MyCoinChanger2,ON)
+        WaitDigitalInput(MyCoinSensor2,OFF,"P-Waiting for Split Ring to push out.")
+        WaitDigitalInput(MyCoinSensor2,ON,"V-Pick the two Split Rings.")
+        DigitalOutput(MyCoinChanger2,OFF)
+        if(RING_SPLIT=="3521441")
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            delay(2000)       
+            DigitalOutput(MyCoinChanger2,ON)
+            WaitDigitalInput(MyCoinSensor2,OFF,"P-Waiting for Split Ring to push out.")
+            WaitDigitalInput(MyCoinSensor2,ON,"V-Pick the two Split Rings.")
+            DigitalOutput(MyCoinChanger2,OFF)
+        end
+        
+
+                    
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        //zy cancel 130530 from good idea
+        /*            
+        DigitalOutput(ToolLight3,ON)
+        WaitDigitalInput(1ToolSensor3,OFF,"R-Pick Seal Ring Tool 3.")
+        DigitalOutput(ToolLight3,OFF)
+        DisplayLine(2,"W-1) Install one Seal Ring to B.Housing.")
+                    
+        delay(1000)
+        */       
+        ClearDisplay()     
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+        
+        DigitalOutput(ToolLight3,ON)
+        //WaitDigitalInput(1ToolSensor3,ON,"T-2) Return Seal Ring Tool 3.")
+        //DigitalOutput(ToolLight3,OFF)
+        //DisplayLine(1,"T-2) Return Seal Ring Tool 3.") //modify by XieGH 201404
+                                                   
+        DigitalOutput(ToolLight5,ON)
+        WaitDigitalInput(1ToolSensor5,ON,"U-Return Seal Ring Tool 1.")
+        DigitalOutput(ToolLight5,OFF)
+        DigitalOutput(ToolLight3,OFF)
+        
+        ClearDisplay()     
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+        DigitalOutput(ToolLight4,ON)
+        WaitDigitalInput(1ToolSensor4,OFF,"X-Pick Seal Ring Tool 2.")
+        DigitalOutput(ToolLight4,OFF)
+                    
+                    //DisplayLine(1,"1) Pick Seal Ring and put into Tool.")
+        DigitalOutput(ToolLight3,ON)
+        WaitDigitalInput(1ToolSensor3,OFF,"R-Pick Seal Ring Tool 3 & Press Ring.")
+        DigitalOutput(ToolLight3,OFF)                    
+        DisplayLine(2,"Y-1) Install another Seal Ring to B.Housing.")
+                    
+        delay(1000)
+        //zy cancel 130530 from good idea
+        /*            
+        DigitalOutput(ToolLight3,ON)
+        WaitDigitalInput(1ToolSensor3,ON,"T-2) Return Seal Ring Tool 3.")
+        DigitalOutput(ToolLight3,OFF)
+        */            
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+        DigitalOutput(ToolLight4,ON)
+        WaitDigitalInput(1ToolSensor4,ON,"U-Return Seal Ring Tool 2.")
+        DigitalOutput(ToolLight4,OFF)
+                    
+    end
+    if(NumToolType == 3)
+                    
+        DigitalOutput(ToolLight4,ON)
+        WaitDigitalInput(1ToolSensor4,OFF,"O-3) Put Seal Ring Tool 2 to B.Housing.")
+        DigitalOutput(ToolLight4,OFF)
+                    
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+        DigitalOutput(MyCoinChanger2,ON)
+        WaitDigitalInput(MyCoinSensor2,OFF,"P-Waiting for Split Ring to push out.")
+        WaitDigitalInput(MyCoinSensor2,ON,"V-Pick the two Split Rings.")
+        DigitalOutput(MyCoinChanger2,OFF)
+                    
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                    
+        DigitalOutput(ToolLight3,ON)
+        WaitDigitalInput(1ToolSensor3,OFF,"R-Pick Seal Ring Tool 3.")
+        DigitalOutput(ToolLight3,OFF)
+        DisplayLine(2,"a-1) Install one Seal Ring to B.Housing.")
+                    
+        delay(1000)
+                    
+        DigitalOutput(ToolLight3,ON)
+        WaitDigitalInput(1ToolSensor3,ON,"T-2) Return Seal Ring Tool 3.")
+        DigitalOutput(ToolLight3,OFF)
+                    
+        ClearDisplay()
+        DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+                               
+        DigitalOutput(ToolLight4,ON)
+        WaitDigitalInput(1ToolSensor4,ON,"U-Return Seal Ring Tool 1.")
+      //  DigitalOutput(ToolLight4,OFF)
+                    
+    end
+    //////////////////////////////20190416 DHF///////////////////
+    /*20220809 DHF
+    ClearDisplay()
+    DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+    if(OPTIONEXISTS(ACTUATOR))
+        if(OPTIONEXISTS(SPACER_MOUNTING))
+            if(Bypass(ISACTIVE,BypassCheckcode) == False)
+                ReScanInput=Input(OP02S1_Data7)
+                if(ReScanInput==1)
+                    ReScanFlag = 1
+                end
+                if((gOP02S1_FormNO != ASSEMBLY_FORMNO) || (DoneNum == 0)||(ReScanFlag == 1))
+                    strPrompt = "[- Scan the SPACER_MOUNTING 2D code"
+                    strSeq = sSeq
+                    strIdenfifier = "SPACER"
+                    ///20210617Run ReadBarcode(SPACER_MOUNTING,strPrompt,strSeq,strIdenfifier)
+                    Table(WRITE,"RESULTS","SCAN",1)
+                end   
+            end
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            //Pickbin(binOP02bracketspacer,"d-Pick Spacer.")
+        end
+        if(OPTIONEXISTS(BRACKET_ACTUATOR))
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            //DisplayLine(2,"\-1) PICK up BRACKET_ACTUATOR.")
+            Delay(1000)
+        end
+        if(OPTIONEXISTS(SCREW_FOR_BRACKET))
+            if(Bypass(ISACTIVE,BypassCheckcode) == False)
+                ReScanInput=Input(OP02S1_Data7)
+                if(ReScanInput==1)
+                    ReScanFlag = 1
+                end
+                if((gOP02S1_FormNO != ASSEMBLY_FORMNO) || (DoneNum == 0)||(ReScanFlag == 1))
+                    strPrompt = "]- Scan the SCREW_FOR_BRACKET 2D code"
+                    strSeq = sSeq
+                    strIdenfifier = "SCREW_FOR_BRACKET"
+                    //20210617Run ReadBarcode(SCREW_FOR_BRACKET,strPrompt,strSeq,strIdenfifier)
+                    Table(WRITE,"RESULTS","SCAN",1)
+                end   
+            end
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            //Pickbin(binOP02bracketscrew,"]-Pick SCREW_FOR_BRACKET .") 20210113
+        end
+        if(OPTIONEXISTS(WASHER_PLAIN))
+            if(Bypass(ISACTIVE,BypassCheckcode) == False)
+                ReScanInput=Input(OP02S1_Data7)
+                if(ReScanInput==1)
+                    ReScanFlag = 1
+                end
+                if((gOP02S1_FormNO != ASSEMBLY_FORMNO) || (DoneNum == 0)||(ReScanFlag == 1))
+                    strPrompt = "_- Scan the WASHER_PLAIN 2D code"
+                    strSeq = sSeq
+                    strIdenfifier = "WASHER_PLAIN"
+                    //20210617Run ReadBarcode(WASHER_PLAIN,strPrompt,strSeq,strIdenfifier)
+                    Table(WRITE,"RESULTS","SCAN",1)
+                  
+                end   
+            
+            end
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            //Pickbin(binOP02bracketwasher,"]-Pick WASHER_PLAIN ...")
+        end
+        if(OPTIONEXISTS(BRACKET_ACTUATOR))
+            ClearDisplay()
+            DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+            DisplayLine(2,">-1) Install BRACKET_ACTUATOR.")
+            Delay(1000)
+        end
+   
+    end
+     */   
+    Output(OP02S1_Data7,0)
+
+    
+            //////////////////////////////////////////
+    WaitDigitalInput(OperatorSwitch1,ON,":-Press Buttons to Release Pallet.")
+    CycleTime(END)       
+    //DigitalOutput(ReleasePallet,ON) 
+    PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"OP03S1")
+    Delay(50)
+    While(true)
+        PalletData = PALLETSEQUENCE_GETDATA(palletID)
+        PalletID    = STRING(PARSECOMMA,PalletData)
+        Destination = STRING(PARSECOMMA,PalletData)
+        PartType    = STRING(PARSECOMMA,PalletData)
+        PresentSeq  = STRING(PARSECOMMA,PalletData)    
+        BreakIf (Destination == "OP03S1")
+        PALLETSEQUENCE_UPDATEDESTINATION(PalletID,"OP03S1")
+        Delay(50)
+    end  
+                      
+                    
+    ClearDisplay()
+    DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+    DigitalOutput(ReleasePallet,ON) 
+    WaitDigitalInput(PalletOnStation,OFF,";-Waiting for Pallet Release...") 
+    
+    DigitalOutput(ReleasePallet,OFF)  
+    
+    
+    run UpdateDoneNum(sSeq)
+    
+    if(STRING(FIND,PartType,"R") == 0)
+        gOP02S1_DoneNum = gOP02S1_DoneNum +1 
+    end
+       
+    Delay(200)  
+    ClearDisplay()
+    DisplayLine(1,"NUM[" + LotSize + "-" + DoneNum + "]")
+    
+    
+      
+return
+      
+SCRIPT GetDoneNum(sSeq,strPrefix,strSequ,LotSize,DoneNum)
+    varString strSend,strReceive
+    varNumber retryNum,retryNum2
+    
+    retryNum2 = 0
+    while(true)
+        retryNum2 = retryNum2 +1
+        strReceive = input(MMCSConnect_Control)
+        strReceive = ""    
+           
+        strSend="GetDoneNum,OP02S1," + sSeq
+        output(MMCSConnect_Control,strSend)
+        Delay(50)            
+        retryNum = 0
+        While(strReceive=="")
+            retryNum = retryNum +1
+            strReceive = strReceive + input(MMCSConnect_Control)
+            breakif (retryNum >= gSettingTimes)
+            Delay(30)
+        end
+        strPrefix = STRING(PARSECOMMA,strReceive)
+        strSequ = STRING(PARSECOMMA,strReceive)    
+        LotSize = STRING(PARSECOMMA,strReceive)
+        DoneNum = STRING(PARSECOMMA,strReceive)
+    
+        breakif ((strPrefix == "OP02S1") && (strSequ == sSeq))
+        breakif (retryNum2 >= gSettingTimes)
+        Delay(50)        
+    end
+    
+return 
+      
+SCRIPT UpdateDoneNum(sSeq)
+       
+    varString strSend,strReceive
+    varNumber retryNum
+    
+    strSend="UpdateDone,OP02S1," + sSeq      
+    output(MMCSConnect_Control,strSend)
+    Delay(50)
+return
+      
+SCRIPT ReadBarcode(ComponentPart,strPrompt,strSeq,strIdenfifier)
+       
+    VarString tmpBarcode
+    varstring strBarcode
+    varString strFormNo
+    ///varString strIdenfifier
+    varstring strComponentPart
+    varNumber blnFlag
+    varString strSend
+    varNumber iNdx //Added by glrao 20120909
+	
+    
+    strFormNo = ReadData("BCAST","ADDINFO","ASSEMBLY_FORMNO")   
+    PSTATS(TRACE,"job_number",strFormNO)
+    
+    While(true)
+        tmpBarcode = Prompt(strPrompt)
+        if(SubStr(tmpBarcode,1,2) == "PO")//The box format
+            strComponentPart = SubStr(tmpBarcode,13,7)
+            if(string(Find,strComponentPart,ComponentPart)>0)
+                //PSTATS(TRACE,"ITEM_IDENFIFIER_" + strIdenfifier + "B_" + strSeq ,strIdenfifier + "B")
+                //PSTATS(TRACE,"ITEM_2D_Code_" + strIdenfifier + "B_" + strSeq ,tmpBarcode)
+                PSTATS(TRACE,"ITEM_2D_Code_" + strIdenfifier,tmpBarcode) 
+                DisplayLine(2,"@-Succssful for scanning the box Barcode")
+                blnFlag = 1
+                breakif (blnFlag == 1 )
+            else
+                DisplayLine(2,"9-Scan Barcode Error :" + tmpBarcode)
+            end
+        else
+            
+            if((SubStr(tmpBarcode,1,1) == "P")&&(String(GETLENGTH,tmpBarcode)>12)) //Component part format
+                
+                
+                strComponentPart = SubStr(tmpBarcode,2,9)//Get comonent Part Numbier
+                if(String(Find,strComponentPart,ComponentPart)>0)
+					
+                    iNdx = QUEUE(FIND,strIdenfifier + "Barcode",tmpBarcode) //Added by glrao 20120909				
+                    if(iNdx > 0)
+                        DisplayLine(3,"9-Scan Barcode Error :" + tmpBarcode)//There'is the same barcode					
+                    else
+                        ///zy modify 141016   
+                        //PSTATS(TRACE,"ITEM_IDENFIFIER",strIdenfifier)
+                        //PSTATS(TRACE,"Item_Data",ComponentPart) 
+                        //PSTATS(TRACE,"ITEM_2D_Code",tmpBarcode) 
+                        PSTATS(TRACE,"ITEM_2D_Code_" + strIdenfifier,tmpBarcode) 
+                        strSend="AddSequData,OP05S1," + strSeq + ",,1," + strIdenfifier + ":" + tmpBarcode + ",1" 
+                        output(MMCSConnect_Control,strSend) 
+                        blnFlag = 1
+						
+                        Run CheckQueue(tmpBarcode,strIdenfifier + "Barcode") //Added by glrao 20120909
+                        breakif (blnFlag == 1 )                 
+                    end
+                else
+                    DisplayLine(3,"9-Scan Barcode Error :" + tmpBarcode)
+                end
+            else
+            
+               /*20230523 if(String(Find,tmpBarcode,ComponentPart)>0)
+                    ///zy modify 141016
+                    //PSTATS(TRACE,"ITEM_IDENFIFIER_" + strIdenfifier + "_" + strSeq,strIdenfifier)
+                    //PSTATS(TRACE,"Item_Data_" + strIdenfifier + "_" + strSeq,ComponentPart)                
+                    //PSTATS(TRACE,"ITEM_2D_Code_" + strIdenfifier + "_" + strSeq,tmpBarcode) 
+                    PSTATS(TRACE,"ITEM_IDENFIFIER_" + strIdenfifier,strIdenfifier)
+                    PSTATS(TRACE,"Item_Data_" + strIdenfifier,ComponentPart)                
+                    PSTATS(TRACE,"ITEM_2D_Code_" + strIdenfifier,tmpBarcode) 
+                    blnFlag = 1
+                    breakif (blnFlag == 1 )               
+                else*/
+                    
+                if(tmpBarcode== "BYS09TA020WXST")   //add by zy20121029
+                    PSTATS(TRACE,"ITEM_2D_Code_" + strIdenfifier,tmpBarcode) 
+                    blnFlag = 1  
+                    strSend="AddSequData,OP12S1," + strSeq + ",,1," + strIdenfifier + ":" + tmpBarcode + ",1" 
+                    output(MMCSConnect_Control,strSend) 
+                    breakif (blnFlag == 1 )
+                else
+                    DisplayLine(3,"9-Scan Barcode Error :" + tmpBarcode)
+                end                    
+                    
+                //end           
+            
+            end
+            
+        end
+        Delay(200)
+    end
+    ///strSend="UpdateSequBind,OP12S1," + sSeq + "," + tmpBarcode
+    ///output(MMCSConnect_Control,strSend)      
+return
+SCRIPT INT36(s36,s10) 
+    select(s36)
+        case "0":
+            s10=0
+        case "1":
+            s10=1
+        case "2":
+            s10=2
+        case "3":
+            s10=3
+        case "4":
+            s10=4
+        case "5":
+            s10=5
+        case "6":
+            s10=6
+        case "7":
+            s10=7
+        case "8":
+            s10=8
+        case "9":
+            s10=9
+        case "A":
+            s10=10
+        case "B":
+            S10=11
+        case "C":
+            S10=12
+        case "c":
+            S10=12   
+        case "D":
+            S10=13
+        case "E":
+            S10=14
+        case "F":
+            S10=15
+        case "G":
+            S10=16
+        case "H":
+            s10=17
+        case "I":
+            S10=18
+        case "J":
+            S10=19
+        case "K":
+            S10=20
+        case "L":
+            S10=21
+        case "M":
+            S10=22
+        case "m":
+            S10=22    
+        case "N":
+            S10=23
+        case "O":
+            s10=24
+        case "P":
+            S10=25
+        case "Q":
+            S10=26
+        case "R":
+            S10=27
+        case "r":
+            S10=27    
+        case "S":
+            S10=28
+        case "s":
+            S10=28    
+        case "T":
+            S10=29
+        case "U":
+            S10=30
+        case "V":
+            s10=31
+        case "W":
+            S10=32
+        case "X":
+            S10=33
+        case "Y":
+            S10=34
+        case "Z":
+            S10=35
+        default:
+            S10=0
+    end  
+return
